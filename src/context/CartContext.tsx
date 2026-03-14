@@ -1,77 +1,85 @@
 import React, { createContext, useContext, useState, useCallback, useEffect, ReactNode } from "react";
-import { CartItem, Product } from "@/types";
-import { MOCK_PRODUCTS } from "@/data/products";
+import { Cart, CartItem } from "@/types";
 import { useAuth } from "./AuthContext";
+import { api, ApiError } from "@/lib/api";
 
 interface CartContextType {
   items: CartItem[];
-  addToCart: (productId: string, qty?: number) => void;
-  removeFromCart: (itemId: string) => void;
-  updateQuantity: (itemId: string, quantity: number) => void;
-  clearCart: () => void;
+  addToCart: (productId: string, qty?: number) => Promise<{ success: boolean; error?: string }>;
+  removeFromCart: (itemId: string) => Promise<void>;
+  updateQuantity: (itemId: string, quantity: number) => Promise<void>;
+  clearCart: () => Promise<void>;
   total: number;
   itemCount: number;
 }
 
 const CartContext = createContext<CartContextType | undefined>(undefined);
 
-function getCartKey(userId: string) {
-  return `ecom_cart_${userId}`;
-}
-
 export function CartProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
   const [items, setItems] = useState<CartItem[]>([]);
 
   useEffect(() => {
-    if (user) {
-      const raw = localStorage.getItem(getCartKey(user.id));
-      setItems(raw ? JSON.parse(raw) : []);
-    } else {
+    if (!user) {
       setItems([]);
+      return;
     }
+
+    let isActive = true;
+    api
+      .get<Cart>("/cart")
+      .then((cart) => {
+        if (isActive) setItems(cart.items || []);
+      })
+      .catch(() => {
+        if (isActive) setItems([]);
+      });
+
+    return () => {
+      isActive = false;
+    };
   }, [user]);
 
-  useEffect(() => {
-    if (user) {
-      localStorage.setItem(getCartKey(user.id), JSON.stringify(items));
-    }
-  }, [items, user]);
-
-  const addToCart = useCallback((productId: string, qty = 1) => {
-    setItems((prev) => {
-      const existing = prev.find((i) => i.product_id === productId);
-      if (existing) {
-        return prev.map((i) => i.product_id === productId ? { ...i, quantity: i.quantity + qty } : i);
+  const addToCart = useCallback(async (productId: string, qty = 1) => {
+    try {
+      const cart = await api.post<Cart>("/cart/items", {
+        product_id: productId,
+        quantity: qty,
+      });
+      setItems(cart.items || []);
+      return { success: true };
+    } catch (error) {
+      if (error instanceof ApiError) {
+        return { success: false, error: error.message };
       }
-      return [...prev, { id: "ci_" + Date.now(), cart_id: "cart", product_id: productId, quantity: qty }];
-    });
-  }, []);
-
-  const removeFromCart = useCallback((itemId: string) => {
-    setItems((prev) => prev.filter((i) => i.id !== itemId));
-  }, []);
-
-  const updateQuantity = useCallback((itemId: string, quantity: number) => {
-    if (quantity <= 0) {
-      setItems((prev) => prev.filter((i) => i.id !== itemId));
-    } else {
-      setItems((prev) => prev.map((i) => i.id === itemId ? { ...i, quantity } : i));
+      return { success: false, error: "Failed to add item to cart" };
     }
   }, []);
 
-  const clearCart = useCallback(() => setItems([]), []);
+  const removeFromCart = useCallback(async (itemId: string) => {
+    await api.delete<void>(`/cart/items/${itemId}`);
+    setItems((prev) => prev.filter((item) => item.id !== itemId));
+  }, []);
 
-  const enrichedItems = items.map((i) => ({
-    ...i,
-    product: MOCK_PRODUCTS.find((p) => p.id === i.product_id),
-  }));
+  const updateQuantity = useCallback(async (itemId: string, quantity: number) => {
+    if (quantity <= 0) {
+      await removeFromCart(itemId);
+    } else {
+      const cart = await api.patch<Cart>(`/cart/items/${itemId}`, { quantity });
+      setItems(cart.items || []);
+    }
+  }, [removeFromCart]);
 
-  const total = enrichedItems.reduce((sum, i) => sum + (i.product?.price ?? 0) * i.quantity, 0);
+  const clearCart = useCallback(async () => {
+    await api.delete<void>("/cart/clear");
+    setItems([]);
+  }, []);
+
+  const total = items.reduce((sum, i) => sum + (i.product?.price ?? 0) * i.quantity, 0);
   const itemCount = items.reduce((sum, i) => sum + i.quantity, 0);
 
   return (
-    <CartContext.Provider value={{ items: enrichedItems, addToCart, removeFromCart, updateQuantity, clearCart, total, itemCount }}>
+    <CartContext.Provider value={{ items, addToCart, removeFromCart, updateQuantity, clearCart, total, itemCount }}>
       {children}
     </CartContext.Provider>
   );

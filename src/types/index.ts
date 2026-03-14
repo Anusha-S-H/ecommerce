@@ -14,6 +14,9 @@ export interface Product {
   description: string;
   price: number;
   stock: number;
+  category: "electronics" | "home" | "office" | "kitchen" | "accessories" | "arrivals";
+  deal_type: "LIGHTNING" | "BANK" | "COUPON" | null;
+  is_new_arrival: boolean;
   image_url: string;
   created_at: string;
 }

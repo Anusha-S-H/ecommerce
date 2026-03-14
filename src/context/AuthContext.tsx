@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useCallback, useEffect, ReactNode } from "react";
 import { User, AuthState } from "@/types";
+import { api, ApiError } from "@/lib/api";
 
 interface AuthContextType extends AuthState {
   login: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
@@ -10,24 +11,6 @@ interface AuthContextType extends AuthState {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 const STORAGE_KEY = "ecom_auth";
-
-// Mock users db in localStorage
-function getUsers(): Array<User & { password: string }> {
-  const raw = localStorage.getItem("ecom_users");
-  if (!raw) {
-    // Seed admin user
-    const seed = [
-      { id: "u1", name: "Admin", email: "admin@store.com", password: "admin123", role: "admin" as const, created_at: new Date().toISOString() },
-    ];
-    localStorage.setItem("ecom_users", JSON.stringify(seed));
-    return seed;
-  }
-  return JSON.parse(raw);
-}
-
-function saveUsers(users: Array<User & { password: string }>) {
-  localStorage.setItem("ecom_users", JSON.stringify(users));
-}
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<AuthState>(() => {
@@ -48,32 +31,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [state]);
 
   const login = useCallback(async (email: string, password: string) => {
-    const users = getUsers();
-    const found = users.find((u) => u.email === email && u.password === password);
-    if (!found) return { success: false, error: "Invalid email or password" };
-    const token = "mock_jwt_" + found.id + "_" + Date.now();
-    const { password: _, ...user } = found;
-    setState({ user, token, isAuthenticated: true });
-    return { success: true };
+    try {
+      const response = await api.post<{ user: User; token: string }>("/auth/login", { email, password });
+      setState({ user: response.user, token: response.token, isAuthenticated: true });
+      return { success: true };
+    } catch (error) {
+      if (error instanceof ApiError) {
+        return { success: false, error: error.message };
+      }
+      return { success: false, error: "Login failed" };
+    }
   }, []);
 
   const register = useCallback(async (name: string, email: string, password: string) => {
-    const users = getUsers();
-    if (users.find((u) => u.email === email)) return { success: false, error: "Email already registered" };
-    const newUser = {
-      id: "u" + Date.now(),
-      name,
-      email,
-      password,
-      role: "user" as const,
-      created_at: new Date().toISOString(),
-    };
-    users.push(newUser);
-    saveUsers(users);
-    const token = "mock_jwt_" + newUser.id + "_" + Date.now();
-    const { password: _, ...user } = newUser;
-    setState({ user, token, isAuthenticated: true });
-    return { success: true };
+    try {
+      const response = await api.post<{ user: User; token: string }>("/auth/register", {
+        name,
+        email,
+        password,
+      });
+      setState({ user: response.user, token: response.token, isAuthenticated: true });
+      return { success: true };
+    } catch (error) {
+      if (error instanceof ApiError) {
+        return { success: false, error: error.message };
+      }
+      return { success: false, error: "Registration failed" };
+    }
   }, []);
 
   const logout = useCallback(() => {
