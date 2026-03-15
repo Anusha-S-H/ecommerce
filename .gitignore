@@ -1,0 +1,11 @@
+.vite/
+dist/
+node_modules/
+
+# Env files
+.env
+.env.*
+!*.env.example
+be/.env
+be/.env.*
+!be/.env.example
